@@ -51,7 +51,8 @@ io.on('connection', (socket) => {
         players: [player1, player2],
         status: 'closed', // Room visibility status
         board: Array(9).fill(null),
-        currentPlayerIndex: randomIndex
+        currentPlayerIndex: randomIndex,
+        moves: { [player1.user.pseudo]: [], [player2.user.pseudo]: [] }
       };
 
       player1.socket.join(roomId);
@@ -81,15 +82,21 @@ io.on('connection', (socket) => {
     const room = rooms[roomId];
     if (room) {
       const currentPlayer = room.players[room.currentPlayerIndex].user.pseudo;
-      if (room.board[index] === null) {
-        room.board[index] = currentPlayer;
-        room.currentPlayerIndex = 1 - room.currentPlayerIndex;
-        const nextPlayer = room.players[room.currentPlayerIndex].user.pseudo;
+      const playerMoves = room.moves[currentPlayer];
 
-        io.to(roomId).emit('moveMade', { board: room.board, currentPlayer: nextPlayer });
-        console.log(`Move made by ${currentPlayer} at index ${index}`);
+      if (playerMoves.length < 3 && room.board[index] === null) {
+        // Place a new piece
+        room.board[index] = currentPlayer;
+        playerMoves.push(index);
+      } else if (playerMoves.length === 3 && room.board[index] === null) {
+        // Move the oldest piece
+        const oldestMove = playerMoves.shift();
+        room.board[oldestMove] = null;
+        room.board[index] = currentPlayer;
+        playerMoves.push(index);
       } else {
-        socket.emit('invalidMove', { message: 'Invalid move, position already taken.' });
+        socket.emit('invalidMove', { message: 'Invalid move, try again.' });
+        return;
       }
 
       // Check for winner
@@ -97,6 +104,10 @@ io.on('connection', (socket) => {
       if (winner) {
         io.to(roomId).emit('gameOver', { winner });
         delete rooms[roomId];
+      } else {
+        room.currentPlayerIndex = 1 - room.currentPlayerIndex;
+        const nextPlayer = room.players[room.currentPlayerIndex].user.pseudo;
+        io.to(roomId).emit('moveMade', { board: room.board, currentPlayer: nextPlayer });
       }
     }
   });
