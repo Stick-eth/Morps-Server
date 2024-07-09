@@ -9,7 +9,7 @@ const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: "http://localhost:3000", // Votre adresse frontend
+    origin: "http://localhost:3000",
     methods: ["GET", "POST"]
   }
 });
@@ -26,7 +26,6 @@ mongoose.connect(process.env.MONGO_URI, {
 
 app.use('/api/users', require('./routes/users'));
 
-// Fonction utilitaire pour générer un ID de room à 5 caractères
 function generateRoomId() {
   return Math.random().toString(36).substr(2, 5);
 }
@@ -49,7 +48,7 @@ io.on('connection', (socket) => {
       const randomIndex = Math.floor(Math.random() * 2);
       rooms[roomId] = {
         players: [player1, player2],
-        status: 'closed', // Room visibility status
+        status: 'closed',
         board: Array(9).fill(null),
         currentPlayerIndex: randomIndex,
         moves: { [player1.user.pseudo]: [], [player2.user.pseudo]: [] }
@@ -78,37 +77,51 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('makeMove', ({ roomId, index }) => {
+  socket.on('makeMove', ({ roomId, toIndex }) => {
     const room = rooms[roomId];
     if (room) {
-      const currentPlayer = room.players[room.currentPlayerIndex].user.pseudo;
+      const currentPlayerIndex = room.currentPlayerIndex;
+      const currentPlayer = room.players[currentPlayerIndex].user.pseudo;
+
+      if (socket.id !== room.players[currentPlayerIndex].socket.id) {
+        socket.emit('invalidMove', { message: 'Ce n\'est pas votre tour.' });
+        return;
+      }
+
       const playerMoves = room.moves[currentPlayer];
 
-      if (playerMoves.length < 3 && room.board[index] === null) {
-        // Place a new piece
-        room.board[index] = currentPlayer;
-        playerMoves.push(index);
-      } else if (playerMoves.length === 3 && room.board[index] === null) {
-        // Move the oldest piece
-        const oldestMove = playerMoves.shift();
-        room.board[oldestMove] = null;
-        room.board[index] = currentPlayer;
-        playerMoves.push(index);
+      if (playerMoves.length < 3 && room.board[toIndex] === null) {
+        room.board[toIndex] = currentPlayer;
+        playerMoves.push(toIndex);
+      } else if (playerMoves.length >= 3 && room.board[toIndex] === null) {
+        const fromIndex = playerMoves.shift();  // always move the oldest piece
+        if (room.board[fromIndex] === currentPlayer) {
+          room.board[fromIndex] = null;
+          room.board[toIndex] = currentPlayer;
+          playerMoves.push(toIndex);
+        } else {
+          socket.emit('invalidMove', { message: 'Invalid move, you can only move your own piece.' });
+          return;
+        }
       } else {
         socket.emit('invalidMove', { message: 'Invalid move, try again.' });
         return;
       }
 
-      // Check for winner
-      const winner = checkWinner(room.board);
-      if (winner) {
-        io.to(roomId).emit('gameOver', { winner });
-        delete rooms[roomId];
-      } else {
-        room.currentPlayerIndex = 1 - room.currentPlayerIndex;
-        const nextPlayer = room.players[room.currentPlayerIndex].user.pseudo;
-        io.to(roomId).emit('moveMade', { board: room.board, currentPlayer: nextPlayer });
-      }
+      io.to(roomId).emit('moveMade', { board: room.board, currentPlayer: currentPlayer });
+
+      // Check for winner after broadcasting the move
+      setTimeout(() => {
+        const winner = checkWinner(room.board);
+        if (winner) {
+          io.to(roomId).emit('gameOver', { winner });
+          delete rooms[roomId];
+        } else {
+          room.currentPlayerIndex = 1 - currentPlayerIndex;
+          const nextPlayer = room.players[room.currentPlayerIndex].user.pseudo;
+          io.to(roomId).emit('moveMade', { board: room.board, currentPlayer: nextPlayer });
+        }
+      }, 500); // Add a delay to allow the move to be visually processed
     }
   });
 
@@ -133,9 +146,9 @@ io.on('connection', (socket) => {
 
 function checkWinner(board) {
   const lines = [
-    [0, 1, 2], [3, 4, 5], [6, 7, 8], // rows
-    [0, 3, 6], [1, 4, 7], [2, 5, 8], // columns
-    [0, 4, 8], [2, 4, 6]             // diagonals
+    [0, 1, 2], [3, 4, 5], [6, 7, 8],
+    [0, 3, 6], [1, 4, 7], [2, 5, 8],
+    [0, 4, 8], [2, 4, 6]
   ];
 
   for (let line of lines) {
