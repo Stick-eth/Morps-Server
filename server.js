@@ -51,7 +51,8 @@ io.on('connection', (socket) => {
         status: 'closed',
         board: Array(9).fill(null),
         currentPlayerIndex: randomIndex,
-        moves: { [player1.user.pseudo]: [], [player2.user.pseudo]: [] }
+        moves: { [player1.user.pseudo]: [], [player2.user.pseudo]: [] },
+        actionTaken: false  // Track if an action has been taken in the current turn
       };
 
       player1.socket.join(roomId);
@@ -88,17 +89,24 @@ io.on('connection', (socket) => {
         return;
       }
 
+      if (room.actionTaken) {
+        socket.emit('invalidMove', { message: 'Vous avez déjà effectué un mouvement ce tour.' });
+        return;
+      }
+
       const playerMoves = room.moves[currentPlayer];
 
       if (playerMoves.length < 3 && room.board[toIndex] === null) {
         room.board[toIndex] = currentPlayer;
         playerMoves.push(toIndex);
+        room.actionTaken = true;  // Mark action as taken
       } else if (playerMoves.length >= 3 && room.board[toIndex] === null) {
         const fromIndex = playerMoves.shift();  // always move the oldest piece
         if (room.board[fromIndex] === currentPlayer) {
           room.board[fromIndex] = null;
           room.board[toIndex] = currentPlayer;
           playerMoves.push(toIndex);
+          room.actionTaken = true;  // Mark action as taken
         } else {
           socket.emit('invalidMove', { message: 'Invalid move, you can only move your own piece.' });
           return;
@@ -118,10 +126,11 @@ io.on('connection', (socket) => {
           delete rooms[roomId];
         } else {
           room.currentPlayerIndex = 1 - currentPlayerIndex;
+          room.actionTaken = false;  // Reset action taken flag for the next turn
           const nextPlayer = room.players[room.currentPlayerIndex].user.pseudo;
           io.to(roomId).emit('moveMade', { board: room.board, currentPlayer: nextPlayer });
         }
-      }, 500); // Add a delay to allow the move to be visually processed
+      }, 300); // Add a delay to allow the move to be visually processed
     }
   });
 
